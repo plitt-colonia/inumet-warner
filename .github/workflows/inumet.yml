@@ -1,0 +1,47 @@
+name: Inumet-Warner
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Nur Test-Alarm aufs Handy schicken?"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: inumet
+  cancel-in-progress: false
+
+jobs:
+  pruefen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inumet pruefen
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          DEEPL_KEY: ${{ secrets.DEEPL_KEY }}
+          NUR_COLONIA: "1"
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.test }}" = "true" ]; then
+            python3 inumet_warner.py --test
+          else
+            python3 inumet_warner.py
+          fi
+
+      - name: Gedaechtnis speichern
+        run: |
+          if [ -n "$(git status --porcelain gemeldet.json)" ]; then
+            git config user.name "inumet-warner"
+            git config user.email "inumet-warner@users.noreply.github.com"
+            git add gemeldet.json
+            git commit -m "Stand aktualisiert"
+            git push
+          fi
