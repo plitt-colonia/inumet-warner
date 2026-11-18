@@ -82,6 +82,10 @@ SAETZE = {
     "rachas de vientos muy fuertes e intensa actividad eléctrica.":
         "Sie können von starkem Regen in kurzer Zeit, Hagel, sehr starken Sturmböen "
         "und intensiver Blitzaktivität begleitet sein.",
+    "las condiciones atmosféricas han mejorado en forma temporaria, por lo que se determina el cese de la advertencia vigente.":
+        "Die Wetterlage hat sich vorübergehend gebessert, die bestehende Warnung wird aufgehoben.",
+    "sin embargo, se mantiene el monitoreo de la situación y en caso de ser necesario se emitirán nuevas advertencias meteorológicas.":
+        "Inumet beobachtet die Lage aber weiter und gibt bei Bedarf neue Warnungen heraus.",
     "las condiciones atmosféricas han mejorado, por lo que se determina el cese de la advertencia vigente.":
         "Die Wetterlage hat sich gebessert, die bestehende Warnung wird aufgehoben.",
 }
@@ -123,11 +127,33 @@ def uebersetze(text):
     deutsch = [SAETZE.get(_norm(s)) for s in saetze]
     if all(deutsch):
         return " ".join(deutsch)
-    d = deepl(text)
+    d = deepl(text) or mymemory(text)
     if d:
-        return d
-    # Teilweise bekannt: Bekanntes übersetzen, Rest im Original markieren
-    return " ".join(de if de else f"[ES] {s.strip()}" for de, s in zip(deutsch, saetze))
+        return d + " (maschinell übersetzt)"
+    # Nichts klappt: Bekanntes deutsch, Rest im Original kennzeichnen
+    rest = [s.strip() for de, s in zip(deutsch, saetze) if not de]
+    bekannt = " ".join(de for de in deutsch if de)
+    return (bekannt + "\n\n" if bekannt else "") + "Original (Spanisch): " + " ".join(rest)
+
+
+def mymemory(text):
+    """Kostenloser Übersetzer ohne Anmeldung (begrenztes Tageskontingent)."""
+    try:
+        url = "https://api.mymemory.translated.net/get?" + urllib.parse.urlencode(
+            {"q": text[:480], "langpair": "es|de"})
+        with urllib.request.urlopen(url, timeout=20) as r:
+            d = json.load(r)
+        t = (d.get("responseData") or {}).get("translatedText") or ""
+        if d.get("responseStatus") != 200 or not t or "MYMEMORY WARNING" in t.upper():
+            return None
+        return html_unescape(t)
+    except Exception:
+        return None
+
+
+def html_unescape(t):
+    import html
+    return html.unescape(t)
 
 
 # ---------------------------------------------------------------- Inumet lesen
@@ -322,7 +348,10 @@ def main():
     # Entwarnung, wenn vorher etwas Relevantes aktiv war und jetzt nichts mehr
     jetzt_aktiv = bool(relevante)
     if st.get("aktiv") and not jetzt_aktiv:
-        text = uebersetze((cese or {}).get("cese", "").split(":", 1)[-1]) or "Keine Warnung mehr aktiv."
+        roh = (cese or {}).get("cese", "").split(":", 1)[-1].strip()
+        text = "Inumet hat die Warnung aufgehoben."
+        if roh:
+            text += "\n\n" + uebersetze(roh)
         sende("Inumet: Entwarnung", text, prio=3, tags="green_circle")
         print("Entwarnung gesendet.")
     st["aktiv"] = jetzt_aktiv
