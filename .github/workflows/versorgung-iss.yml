@@ -1,0 +1,46 @@
+name: Versorgung-und-ISS
+
+on:
+  schedule:
+    - cron: "12,42 * * * *"
+    - cron: "3 20 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: inumet
+  cancel-in-progress: false
+
+jobs:
+  pruefen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wasser pruefen
+        if: github.event.schedule != '3 20 * * *'
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC_ELTERN }}
+        run: python3 versorgung_iss.py --ose
+
+      - name: ISS pruefen
+        if: github.event.schedule == '3 20 * * *' || github.event_name == 'workflow_dispatch'
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          pip install --quiet skyfield
+          python3 versorgung_iss.py --iss
+
+      - name: Gedaechtnis speichern
+        run: |
+          if [ -n "$(git status --porcelain gemeldet_versorgung.json)" ]; then
+            git config user.name "inumet-warner"
+            git config user.email "inumet-warner@users.noreply.github.com"
+            git add gemeldet_versorgung.json
+            git commit -m "Stand Versorgung/ISS"
+            git pull --rebase
+            git push
+          fi
