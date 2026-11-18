@@ -40,6 +40,8 @@ STATE_FILE = os.environ.get(
 HEIM_LAT, HEIM_LNG = -34.4626, -57.8400
 HEIM_DEPARTAMENTO = "COLONIA"
 HEIM_ORT = "Colonia del Sacramento"
+# Alarm auch, wenn das Warngebiet näher als so viele km an Colonia heranreicht
+UMKREIS_KM = float(os.environ.get("UMKREIS_KM", "100"))
 
 # ---------------------------------------------------------------- Übersetzungen
 STUFE = {1: "Grün", 2: "Gelb", 3: "Orange", 4: "Rot"}
@@ -159,16 +161,37 @@ def im_polygon(lat, lng, punkte):
     return drin
 
 
+def abstand_km(lat, lng, punkte):
+    """Kürzester Abstand (km) vom Punkt zum Rand eines Polygons (0, wenn drin)."""
+    import math
+    if im_polygon(lat, lng, punkte):
+        return 0.0
+    kx = 111.32 * math.cos(math.radians(lat))
+    ky = 110.57
+    def xy(p):
+        return ((p["lng"] - lng) * kx, (p["lat"] - lat) * ky)
+    best = float("inf")
+    for i in range(len(punkte)):
+        (x1, y1), (x2, y2) = xy(punkte[i - 1]), xy(punkte[i])
+        dx, dy = x2 - x1, y2 - y1
+        t = 0.0 if dx == dy == 0 else max(0.0, min(1.0, -(x1 * dx + y1 * dy) / (dx * dx + dy * dy)))
+        best = min(best, math.hypot(x1 + t * dx, y1 + t * dy))
+    return best
+
+
+def naechster_abstand(adv):
+    polys = [p for p in adv.get("coordsPoligonos") or [] if p]
+    return min((abstand_km(HEIM_LAT, HEIM_LNG, p) for p in polys), default=None)
+
+
 def betrifft_uns(adv):
     for z in adv.get("zonasArray") or []:
         if str(z.get("id", "")).upper() == HEIM_DEPARTAMENTO:
             orte = [o.lower() for o in z.get("localidades") or []]
             if not orte or HEIM_ORT.lower() in orte or "colonia" in orte:
                 return True
-    for poly in adv.get("coordsPoligonos") or []:
-        if poly and im_polygon(HEIM_LAT, HEIM_LNG, poly):
-            return True
-    return False
+    d = naechster_abstand(adv)
+    return d is not None and d <= UMKREIS_KM
 
 
 def datum(s):
@@ -182,17 +205,20 @@ def baue_meldung(adv, alerta):
     stufe = max([int(v) for v in risiken.values() if v] + [1])
     arten = [ART.get(k, k) for k, v in risiken.items() if v and int(v) > 1]
     uns = betrifft_uns(adv)
+    d = naechster_abstand(adv)
 
     departamentos = ", ".join(z.get("label", z.get("id", "")) for z in adv.get("zonasArray") or [])
     titel = f"Inumet: Warnstufe {STUFE.get(stufe, stufe)} – {', '.join(arten) or 'Wetter'}"
     if uns:
-        titel = "⚠ COLONIA BETROFFEN · " + titel
+        titel = ("⚠ COLONIA BETROFFEN · " if d == 0 or d is None else "⚠ NAHE COLONIA · ") + titel
 
     zeilen = [
         uebersetze(adv.get("fenomeno", "")),
         f"Beginn: {datum(adv.get('comienzo'))} · nächste Aktualisierung/Ende: {datum(adv.get('finalizacion'))}",
         f"Wahrscheinlichkeit: {adv.get('probabilidad', '?')}",
-        f"Colonia betroffen: {'JA' if uns else 'nein'}",
+        ("Colonia: liegt IM Warngebiet" if d == 0 or (uns and d is None)
+         else f"Colonia: Warngebiet ca. {d:.0f} km entfernt" + (" – in der Nähe!" if uns else "")
+         if d is not None else "Colonia: nicht betroffen"),
         "",
         uebersetze(adv.get("descripcion", "")),
         "",
